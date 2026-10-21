@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ROLES,GLOBAL_EVENTS,FED_RULES,BOARD} from './data.js';
-import {createGame,financials,assetValue,effectBreakdown,makeSnapshot,evaluateFed,rollDice,drawEvent,movementPath,endTurn,settleSeason,adjustStaff,issueLoan,repayLoan,updateBadLoans,exportGame,importGame} from './engine.js';
+import {ROLES,GLOBAL_EVENTS,PERSONAL_EVENTS,SECTOR_EVENTS,ALL_EVENTS,EVENT_CATEGORIES,METRICS,FED_RULES,BOARD} from './data.js';
+import {drawForTile,createGame,financials,assetValue,effectBreakdown,makeSnapshot,evaluateFed,rollDice,drawEvent,movementPath,endTurn,settleSeason,adjustStaff,issueLoan,repayLoan,updateBadLoans,exportGame,importGame} from './engine.js';
 
 const game=()=>createGame({players:[{name:'甲',roleId:'auto'},{name:'乙',roleId:'technology'}],seed:42});
 const active=(eventId,scope='global',extra={})=>({instanceId:1,eventId,scope,ownerId:null,sector:null,startedRound:1,...extra});
@@ -63,8 +63,8 @@ test('舊存檔載入時補上罷工幽靈狀態',()=>{
   assert.deepEqual(restored.ghostTrail,[]);
   assert.deepEqual(restored.struckPlayerIds,[]);
 });
-test('十種企業、十張全球卡、十條規則及基準淨利符合規格',()=>{
-  assert.equal(ROLES.length,10);assert.equal(GLOBAL_EVENTS.length,10);assert.equal(FED_RULES.length,10);
+test('十種企業、擴充全球卡、十條規則及基準淨利符合規格',()=>{
+  assert.equal(ROLES.length,10);assert.equal(GLOBAL_EVENTS.length,22);assert.equal(FED_RULES.length,10);
   assert.deepEqual(ROLES.map(r=>Math.round(Object.values(r.base).reduce((a,b)=>a+b,0))),[200,230,50,420,440,160,165,330,65,315]);
 });
 test('E01 依衰減向量計算，且不憑空建立銀行原物料成本',()=>{
@@ -182,4 +182,102 @@ test('固定種子可重現拉霸數字與事件',()=>{
   assert.ok(x.reels.every(n=>n>=0&&n<=6));
   assert.equal(x.dice,y.dice);
   if(a.phase==='draw')assert.equal(drawEvent(a).eventId,drawEvent(b).eventId);
+});
+
+test('裁員降低產能並收取資遣費；現金不足不改動公司',()=>{
+  const s=game();s.phase='manage';
+  const before=financials(s,'auto');
+  adjustStaff(s,'player-1',-75);
+  assert.equal(s.companies.auto.cash,1100);
+  assert.equal(financials(s,'auto').revenue,before.revenue/2);
+  assert.equal(financials(s,'auto').flows.labor,before.flows.labor/2);
+  adjustStaff(s,'player-1',-75);
+  assert.equal(financials(s,'auto').revenue,0);
+  const poor=game();poor.phase='manage';poor.companies.auto.cash=0;
+  const original=exportGame(poor);
+  assert.throws(()=>adjustStaff(poor,'player-1',-1),/資遣費/);
+  assert.equal(exportGame(poor),original);
+  const expanded=game();expanded.companies.auto.headcount=300;
+  assert.equal(financials(expanded,'auto').revenue,before.revenue*1.5);
+});
+test('緊急融資計入新增負債後恰好達到 15%，到期正常償還',()=>{
+  const s=game();s.targetWealth=1e9;s.bank.liquidAssets=50;
+  const result=settleSeason(s);
+  assert.equal(result.decision.kind,'rescue');
+  assert.ok(Math.abs(s.bank.liquidAssets/s.bank.shortTermLiabilities-.15)<1e-12);
+  const amount=s.bank.rescues[0].amount;
+  assert.ok(Math.abs(amount-100/.85)<1e-10);
+  s.bank.liquidAssets+=500;
+  settleSeason(s);settleSeason(s);settleSeason(s);
+  assert.equal(s.bank.rescues.length,0);
+  assert.ok(Math.abs(s.bank.shortTermLiabilities-1000)<1e-9);
+});
+test('完整存檔可往返各階段、事件與結算；結束對局可匯入',()=>{
+  const s=game();s.targetWealth=1e9;
+  const check=()=>assert.deepEqual(importGame(exportGame(s)),s);
+  check();s.ghostPosition=23;rollDice(s,[0,1]);check();drawEvent(s);check();endTurn(s);check();
+  rollDice(s,[0,0]);endTurn(s);check();
+  while(s.status==='playing'){settleSeason(s);check()}
+});
+test('拒絕不完整或非法存檔資料，原對局不受影響',()=>{
+  const original=game(),raw=exportGame(original);
+  const mutations=[
+    s=>delete s.companies.auto,s=>s.players[0].roleId='missing',s=>s.players[1].id=s.players[0].id,
+    s=>s.turnIndex=9,s=>s.companies.auto.cash='1200',s=>s.companies.auto.debt=-1,
+    s=>s.companies.auto.headcount=1001,s=>s.bank.nonperformingLoans=1001,
+    s=>delete s.decisions,s=>s.phase='finished',s=>s.ghostPosition=24,
+    s=>s.activeEvents.push({eventId:'unknown'}),s=>s.struckPlayerIds=['unknown'],
+    s=>s.sync={gameId:'x',revision:-1,updatedAt:1,writerId:'x'},
+    s=>s.bank.rescues=[{amount:-1,dueRound:2}],s=>s.monetaryProgram={type:'bad',startRound:1}
+  ];
+  for(const mutate of mutations){const broken=JSON.parse(raw);mutate(broken);assert.throws(()=>importGame(JSON.stringify(broken)),/存檔格式/)}
+  for(const text of ['null','[]','{}','{'])assert.throws(()=>importGame(text),/存檔格式/);
+  assert.equal(exportGame(original),raw);
+  const settled=game();settleSeason(settled);settled.evaluations[0].items=[];
+  assert.throws(()=>importGame(exportGame(settled)),/存檔格式/);
+});
+
+test('新增借款按政策年利率除以四計息，還款降低本季成本',()=>{
+  const s=game();s.phase='manage';const base=financials(s,'auto');
+  issueLoan(s,'player-1',200);
+  const borrowed=financials(s,'auto');
+  assert.equal(borrowed.loanInterest,2);assert.equal(borrowed.profit,base.profit-2);
+  assert.equal(borrowed.costs,base.costs-2);
+  repayLoan(s,'player-1',100);assert.equal(financials(s,'auto').loanInterest,1);
+  s.fedRatePercent=8;assert.equal(financials(s,'auto').loanInterest,2);
+  s.fedRatePercent=0;assert.equal(financials(s,'auto').loanInterest,0);
+  s.fedRatePercent=4;repayLoan(s,'player-1',100);
+  assert.equal(financials(s,'auto').profit,base.profit);
+});
+test('銀行罷工仍須付借款利息，季末扣款與預估一致且存檔相容',()=>{
+  const s=createGame({players:[{name:'甲',roleId:'bank'},{name:'乙',roleId:'auto'}],seed:42});
+  s.phase='manage';issueLoan(s,'player-1',200);s.struckPlayerIds=['player-1'];
+  const f=financials(s,'bank');assert.equal(f.otherIncome,0);assert.equal(f.flows.loan_interest,-2);
+  const cash=s.companies.bank.cash;settleSeason(s);
+  assert.equal(s.companies.bank.cash,Math.round((cash+f.profit)*100)/100);
+  assert.deepEqual(importGame(exportGame(s)),s);
+});
+
+test('六種主題與 58 張事件資料完整，所有產業均有三種事件',()=>{
+  assert.equal(ALL_EVENTS.length,58);assert.equal(new Set(ALL_EVENTS.map(e=>e.id)).size,58);
+  assert.equal(EVENT_CATEGORIES.length,6);
+  for(const e of ALL_EVENTS){
+    assert.ok(EVENT_CATEGORIES.includes(e.category));assert.equal(e.decay.length,e.duration);
+    assert.ok(e.decay.every(n=>Number.isFinite(n)&&n>0&&n<=1));
+    for(const f of e.effects){assert.ok([...METRICS,'asset_value'].includes(f.metric));assert.ok(Number.isFinite(f.pct));assert.ok(['all','interest_negative','except_technology'].includes(f.target)||f.target.split(',').every(id=>ROLES.some(r=>r.id===id)))}
+  }
+  for(const sector of new Set(ROLES.map(r=>r.sector)))assert.equal(SECTOR_EVENTS.filter(e=>e.sector===sector).length,3);
+});
+test('產業格隨機抽不同事件，僅影響同產業且新事件可存讀',()=>{
+  const s=game(),tile=BOARD[3],seen=new Set();
+  for(let i=0;i<80;i++){
+    const a=drawForTile(s,tile,'player-1');seen.add(a.eventId);
+    assert.equal(a.sector,'製造業');assert.ok(SECTOR_EVENTS.some(e=>e.id===a.eventId&&e.sector===a.sector));
+  }
+  assert.equal(seen.size,3);
+  s.activeEvents=[];s.lastDraw=null;
+  s.activeEvents.push({...active('S07','sector'),sector:'製造業'});s.eventSerial=1;
+  assert.equal(financials(s,'auto').revenue,1120);assert.equal(financials(s,'technology').revenue,900);
+  assert.deepEqual(importGame(exportGame(s)),s);
+  s.round=4;assert.equal(effectBreakdown(s,'auto','revenue').length,0);
 });
