@@ -43,53 +43,6 @@ export const SECTOR_EVENTS = [
   {id:'S05',name:'民生供應吃緊',sector:'民生業',duration:3,decay:[1,.6,.3],effects:[fx('material',30),fx('revenue',10)]},
   {id:'S06',name:'科技採購熱潮',sector:'科技業',duration:3,decay:[1,.65,.3],effects:[fx('revenue',30),fx('labor',15)]}
 ];
-export const EVENT_CATEGORIES=['政策與法規','科技與資安','氣候與能源','供應鏈與貿易','市場與消費','企業與人才'];
-// Themes describe the subject; global/personal/sector still determine who is affected.
-const originalThemes={E01:2,E02:4,E03:3,E04:3,E05:1,E06:2,E07:4,E08:0,E09:4,E10:4,P01:4,P02:5,P03:5,P04:0,P05:4,P06:4,S01:3,S02:4,S03:4,S04:0,S05:3,S06:1};
-for(const e of [...GLOBAL_EVENTS,...PERSONAL_EVENTS,...SECTOR_EVENTS])e.category=EVENT_CATEGORIES[originalThemes[e.id]];
-const themed=(id,name,category,effects,sector)=>({id,name,category:EVENT_CATEGORIES[category],duration:3,decay:[1,.6,.3],effects,...(sector?{sector}:{})});
-GLOBAL_EVENTS.push(
-  themed('E11','綠能投資抵稅',0,[fx('tax',-20),fx('revenue',15,'energy,technology')]),
-  themed('E12','跨國資料保護新規',0,[fx('fixed',15),fx('revenue',-10,'technology')]),
-  themed('E13','全球資安攻擊潮',1,[fx('fixed',15),fx('revenue',-12),fx('revenue',25,'technology')]),
-  themed('E14','自動化設備普及',1,[fx('labor',-12),fx('fixed',10)]),
-  themed('E15','極端高溫與限電',2,[fx('energy',25),fx('revenue',-18,'agriculture'),fx('revenue',-10,'auto,electronics')]),
-  themed('E16','再生能源供應增加',2,[fx('energy',-20),fx('revenue',-10,'energy')]),
-  themed('E17','主要港口恢復通航',3,[fx('export_cost',-20),fx('material',-10),fx('revenue',10,'logistics')]),
-  themed('E18','區域自由貿易協定',3,[fx('import_tax',-25),fx('export_cost',-15),fx('revenue',10,'auto,electronics')]),
-  themed('E19','旅遊與實體消費復甦',4,[fx('revenue',20,'retail,logistics'),fx('energy',10)]),
-  themed('E20','家庭預防性儲蓄增加',4,[fx('revenue',-15,'retail,auto,property'),fx('interest',8,'bank')]),
-  themed('E21','專業人才短缺',5,[fx('labor',18),fx('revenue',-8,'electronics,technology')]),
-  themed('E22','職能培訓補助',5,[fx('labor',-10),fx('revenue',8)])
-);
-PERSONAL_EVENTS.push(
-  themed('P07','研發成果取得專利',1,[fx('revenue',18),fx('fixed',8)]),
-  themed('P08','公司資料外洩',1,[fx('fixed',25),fx('revenue',-15)]),
-  themed('P09','節能設備完成升級',2,[fx('energy',-20),fx('fixed',8)]),
-  themed('P10','倉庫遭遇暴雨',2,[fx('fixed',25),fx('revenue',-12)]),
-  themed('P11','替代供應商簽約',3,[fx('material',-15),fx('export_cost',-10)]),
-  themed('P12','主要供應商延遲交貨',3,[fx('material',18),fx('revenue',-12)]),
-  themed('P13','品牌口碑帶動回購',4,[fx('revenue',22)]),
-  themed('P14','核心團隊離職',5,[fx('revenue',-18),fx('fixed',12)]),
-  themed('P15','團隊流程改善',5,[fx('labor',-12),fx('revenue',8)]),
-  themed('P16','取得政府創新補助',0,[fx('tax',-20),fx('fixed',-12)]),
-  themed('P17','產品法規檢驗延誤',0,[fx('fixed',18),fx('revenue',-10)]),
-  themed('P18','新品上市反應冷淡',4,[fx('revenue',-18),fx('fixed',10)])
-);
-SECTOR_EVENTS.push(
-  themed('S07','製造業智慧工廠升級',1,[fx('labor',-15),fx('revenue',12)],'製造業'),
-  themed('S08','製造業出口認證加嚴',0,[fx('export_cost',20),fx('revenue',-12)],'製造業'),
-  themed('S09','零售購物節熱潮',4,[fx('revenue',25),fx('labor',10)],'消費業'),
-  themed('S10','零售資安事件',1,[fx('fixed',20),fx('revenue',-15)],'消費業'),
-  themed('S11','金融監理成本增加',0,[fx('fixed',20),fx('revenue',-8)],'金融業'),
-  themed('S12','金融數位服務普及',1,[fx('fixed',-15),fx('revenue',15)],'金融業'),
-  themed('S13','燃料運輸中斷',3,[fx('energy',30),fx('revenue',-10)],'能源與運輸'),
-  themed('S14','低碳物流需求成長',2,[fx('revenue',18),fx('fixed',10)],'能源與運輸'),
-  themed('S15','民生設施修復補助',0,[fx('fixed',-20),fx('revenue',12)],'民生業'),
-  themed('S16','旱災衝擊民生供應',2,[fx('material',25),fx('revenue',-15)],'民生業'),
-  themed('S17','科技人才競薪潮',5,[fx('labor',25),fx('revenue',8)],'科技業'),
-  themed('S18','雲端服務訂單擴大',4,[fx('revenue',22),fx('fixed',8)],'科技業')
-);
 export const ALL_EVENTS=[...GLOBAL_EVENTS,...PERSONAL_EVENTS,...SECTOR_EVENTS];
 export const FED_RULES=[
   {id:'F01',name:'惡性通膨',fields:['inflationPct'],formula:'π(t) ≥ 8%'},

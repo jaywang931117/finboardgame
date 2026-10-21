@@ -46,16 +46,13 @@ export function financials(state,roleId,round=state.round){
     if(!base){flows[m]=0;continue}
     let extra=0;
     if(m==='interest')extra=(base<0?40:roleId==='bank'?30:0)*d+(base<0?(program==='QE'?-10:program==='QT'?10:0):0);
-    const headFactor=m==='labor'?c.headcount/role.baseHeadcount:m==='revenue'?Math.min(1.5,c.headcount/role.baseHeadcount):1;
+    const headFactor=m==='labor'?c.headcount/role.baseHeadcount:1;
     flows[m]=round2(Math.sign(base)*Math.abs(base)*headFactor*Math.max(0,1+clamp(metricPct(state,roleId,m,round)+extra,-60,100)/100));
   }
   const ownerId=state.players.find(p=>p.roleId===roleId)?.id;
   if(round===state.round&&state.struckPlayerIds?.includes(ownerId))for(const m of METRICS)if(flows[m]>0)flows[m]=0;
-  const loanInterest=round2(c.debt*state.fedRatePercent/100/4);
-  // Keep loan costs separate so a bank's interest income cannot hide expenses during a strike.
-  flows.loan_interest=-loanInterest;
   const revenue=flows.revenue,costs=Object.entries(flows).filter(([m,v])=>m!=='revenue'&&v<0).reduce((s,[,v])=>s+v,0),otherIncome=Object.entries(flows).filter(([m,v])=>m!=='revenue'&&v>0).reduce((s,[,v])=>s+v,0);
-  return {flows,loanInterest,revenue,costs:round2(costs),otherIncome:round2(otherIncome),profit:round2(Object.values(flows).reduce((s,v)=>s+v,0)),assetValue:assetValue(state,roleId,round)};
+  return {flows,revenue,costs:round2(costs),otherIncome:round2(otherIncome),profit:round2(Object.values(flows).reduce((s,v)=>s+v,0)),assetValue:assetValue(state,roleId,round)};
 }
 export function companyPosition(state,roleId){const c=state.companies[roleId];return {cash:c.cash,assetValue:assetValue(state,roleId),debt:c.debt,netWorth:c.cash+assetValue(state,roleId)-c.debt}}
 
@@ -79,7 +76,7 @@ export function drawForTile(state,tile,ownerId){
     const sectors=['製造業','消費業','金融業','能源與運輸','民生業','科技業'];
     const index=Math.floor((BOARD.indexOf(tile)-3)/3);
     sector=sectors[((index%sectors.length)+sectors.length)%sectors.length];
-    event=pick(state,SECTOR_EVENTS.filter(e=>e.sector===sector));
+    event=SECTOR_EVENTS.find(e=>e.sector===sector);
   } else return null;
   const active={instanceId:++state.eventSerial,eventId:event.id,scope,sector,ownerId:scope==='personal'?ownerId:null,startedRound:state.round};
   state.activeEvents.push(active);
@@ -123,10 +120,6 @@ export function adjustStaff(state,playerId,delta){
   const p=state.players[state.turnIndex],c=state.companies[p.roleId];
   const employed=Object.values(state.companies).reduce((s,x)=>s+x.headcount,0);
   if(c.headcount+delta<0||employed+delta>1000)throw Error('超出可聘僱或可裁員人數。');
-  const severance=delta<0?round2(-delta*Math.abs(roleById(p.roleId).base.labor)/roleById(p.roleId).baseHeadcount):0;
-  if(severance>c.cash)throw Error('現金不足以支付資遣費（一季基本薪資）。');
-  c.cash=round2(c.cash-severance);
-  if(severance)state.log.unshift(`${p.name}支付資遣費 ${severance}。`);
   c.headcount+=delta;state.log.unshift(`${p.name}${delta>0?'聘僱':'裁員'} ${Math.abs(delta)} 人。`);
 }
 export function issueLoan(state,playerId,amount){
@@ -220,7 +213,7 @@ function applyDecision(state,decision){
     state.monetaryProgram={type,startRound:state.round};
   }
   if(decision.kind==='rescue'){
-    const amount=Math.max(0,(.15*state.bank.shortTermLiabilities-state.bank.liquidAssets)/.85);
+    const amount=Math.max(0,.15*state.bank.shortTermLiabilities-state.bank.liquidAssets);
     state.bank.liquidAssets+=amount;state.bank.shortTermLiabilities+=amount;
     if(amount)state.bank.rescues.push({amount,dueRound:state.round+3});
   }
@@ -265,56 +258,4 @@ export function getEconomicHistory(state,from=1,to=state.round){return state.eco
 export function getFedRuleEvaluations(state,round){return state.evaluations.find(x=>x.round===round)?.items||null}
 export function getFedDecision(state,round){return state.decisions.find(x=>x.round===round)||null}
 export function exportGame(state){return JSON.stringify(state,null,2)}
-export function importGame(json){
-  const fail=()=>{throw Error('存檔格式不正確或資料不完整，原對局未變更。')};
-  let s;try{s=JSON.parse(json)}catch{fail()}
-  const obj=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
-  const num=x=>typeof x==='number'&&Number.isFinite(x);
-  const integer=(x,min,max=Number.MAX_SAFE_INTEGER)=>Number.isSafeInteger(x)&&x>=min&&x<=max;
-  const strings=x=>Array.isArray(x)&&x.every(v=>typeof v==='string');
-  if(!obj(s)||s.version!==1||!Array.isArray(s.players)||s.players.length<2||s.players.length>8)fail();
-  const ids=new Set(),roles=new Set(),names=new Set();
-  for(const p of s.players){
-    if(!obj(p)||typeof p.id!=='string'||!p.id||ids.has(p.id)||!roleById(p.roleId)||roles.has(p.roleId)||typeof p.name!=='string'||!p.name.trim()||names.has(p.name.trim())||!integer(p.position,0,BOARD.length-1)||!integer(p.color,0,7))fail();
-    ids.add(p.id);roles.add(p.roleId);names.add(p.name.trim());
-  }
-  if(!integer(s.round,1,50)||!integer(s.maxRounds,2,50)||s.round>s.maxRounds||!num(s.targetWealth)||s.targetWealth<2000||!Number.isSafeInteger(s.seed)||!integer(s.rng,-2147483648,2147483647)||s.rng===0||!integer(s.turnIndex,0,s.players.length-1))fail();
-  if(!['playing','bankruptcy','goal','round_limit'].includes(s.status)||!['roll','draw','manage','strike','finished'].includes(s.phase)||(s.status==='playing')===(s.phase==='finished'))fail();
-  if(!obj(s.companies))fail();
-  let employees=0;
-  for(const r of ROLES){const c=s.companies[r.id];if(!obj(c)||!num(c.cash)||!num(c.assetReferenceValue)||c.assetReferenceValue<0||!num(c.debt)||c.debt<0||!integer(c.headcount,0,1000))fail();employees+=c.headcount}
-  if(employees>1000)fail();
-  const b=s.bank;
-  if(!obj(b)||!['liquidAssets','shortTermLiabilities','totalLoans','nonperformingLoans'].every(k=>num(b[k])&&b[k]>=0)||b.nonperformingLoans>b.totalLoans||!integer(b.riskRestrictionUntil,0)||!Array.isArray(b.rescues)||b.rescues.some(r=>!obj(r)||!num(r.amount)||r.amount<=0||!integer(r.dueRound,1)))fail();
-  if(!num(s.fedRatePercent)||s.fedRatePercent<0||s.fedRatePercent>10||(s.lastRateDecisionRound!==null&&!integer(s.lastRateDecisionRound,1,s.round)))fail();
-  if(s.monetaryProgram!==null&&(!obj(s.monetaryProgram)||!['QE','QT'].includes(s.monetaryProgram.type)||!integer(s.monetaryProgram.startRound,1,s.round)))fail();
-  if(!integer(s.eventSerial,0)||!Array.isArray(s.activeEvents))fail();
-  const instances=new Set();
-  for(const a of s.activeEvents){
-    const e=obj(a)&&eventById(a.eventId);
-    if(!e||!integer(a.instanceId,1,s.eventSerial)||instances.has(a.instanceId)||!integer(a.startedRound,1,s.round)||!['global','personal','sector'].includes(a.scope))fail();
-    if(a.scope==='global'&&!GLOBAL_EVENTS.includes(e)||a.scope==='personal'&&(!PERSONAL_EVENTS.includes(e)||!ids.has(a.ownerId))||a.scope==='sector'&&(!SECTOR_EVENTS.includes(e)||a.sector!==e.sector))fail();
-    instances.add(a.instanceId);
-  }
-  if(s.lastDraw!==null&&(!obj(s.lastDraw)||!s.activeEvents.some(a=>JSON.stringify(a)===JSON.stringify(s.lastDraw))))fail();
-  if(!strings(s.log)||!strings(s.winnerIds)||s.winnerIds.some(id=>!ids.has(id)))fail();
-  if(s.dice!==null&&!integer(s.dice,0,12))fail();
-  if(s.reels!==null&&(!Array.isArray(s.reels)||s.reels.length!==2||s.reels.some(n=>!integer(n,0,6))||s.reels[0]+s.reels[1]!==s.dice))fail();
-  if(s.phase==='roll'&&(s.dice!==null||s.reels!==null)||['draw','manage','strike'].includes(s.phase)&&s.dice===null)fail();
-  const scalarRecord=x=>obj(x)&&Object.values(x).every(v=>v===null||typeof v==='string'||typeof v==='boolean'||num(v)||strings(v));
-  if(!Array.isArray(s.economicHistory)||!Array.isArray(s.evaluations)||!Array.isArray(s.decisions))fail();
-  const count=s.status==='playing'?s.round-1:s.round;
-  if(s.economicHistory.length!==count||s.evaluations.length!==count||s.decisions.length!==count)fail();
-  const snapshotKeys=Object.keys(makeSnapshot(createGame({players:s.players,seed:1})));
-  for(let i=0;i<count;i++){
-    const h=s.economicHistory[i],ev=s.evaluations[i],d=s.decisions[i];
-    if(!scalarRecord(h)||h.round!==i+1||snapshotKeys.some(k=>!(k in h))||snapshotKeys.some(k=>!['monetaryProgram','dataWarnings'].includes(k)&&h[k]!==null&&!num(h[k]))||!strings(h.dataWarnings)||h.monetaryProgram!==null&&!['QE','QT'].includes(h.monetaryProgram))fail();
-    if(!obj(ev)||ev.round!==i+1||!Array.isArray(ev.items)||ev.items.length!==FED_RULES.length)fail();
-    for(const rule of FED_RULES){const matches=ev.items.filter(x=>obj(x)&&x.ruleId===rule.id);const x=matches[0];if(matches.length!==1||typeof x.name!=='string'||!strings(x.comparisons)||!strings(x.requiredMetricIds)||!['insufficient_data','matched','not_matched','suppressed_by_priority','rate_cooldown','selected'].includes(x.status)||typeof x.reason!=='string'||x.proposedAction!==null&&typeof x.proposedAction!=='string')fail()}
-    if(!obj(d)||d.round!==i+1||d.ruleId!==null&&!FED_RULES.some(r=>r.id===d.ruleId)||typeof d.action!=='string'||!['none','rate','program','rescue','restriction'].includes(d.kind)||!num(d.delta)||d.nextEffectiveRound!==i+2)fail();
-  }
-  if(s.sync!==undefined&&(!obj(s.sync)||typeof s.sync.gameId!=='string'||!s.sync.gameId||!integer(s.sync.revision,0)||!num(s.sync.updatedAt)||s.sync.updatedAt<0||typeof s.sync.writerId!=='string'))fail();
-  // Legacy saves may omit ghost fields; reject malformed fields before migration.
-  if(s.ghostPosition!==undefined&&!integer(s.ghostPosition,0,BOARD.length-1)||s.ghostRng!==undefined&&(!integer(s.ghostRng,-2147483648,2147483647)||s.ghostRng===0)||s.ghostTrail!==undefined&&(!Array.isArray(s.ghostTrail)||s.ghostTrail.some(n=>!integer(n,0,BOARD.length-1)))||s.struckPlayerIds!==undefined&&(!strings(s.struckPlayerIds)||s.struckPlayerIds.some(id=>!ids.has(id))))fail();
-  ensureGhostState(s);return s;
-}
+export function importGame(json){const s=JSON.parse(json);if(s.version!==1||!Array.isArray(s.players)||!Array.isArray(s.economicHistory)||!s.companies||!s.bank||!Array.isArray(s.activeEvents))throw Error('存檔格式不正確。');ensureGhostState(s);return s}
