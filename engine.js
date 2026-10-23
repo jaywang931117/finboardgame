@@ -158,6 +158,28 @@ export function updateBadLoans(state,playerId,amount){
   state.bank.nonperformingLoans+=amount;state.log.unshift(`銀行${amount>0?'認列':'收回'} ${Math.abs(amount)} 壞帳。`);
 }
 
+export function applyManagement(state,playerId,action,amount){
+  if(action==='hire')return adjustStaff(state,playerId,amount);
+  if(action==='layoff')return adjustStaff(state,playerId,-amount);
+  if(action==='loan')return issueLoan(state,playerId,amount);
+  if(action==='repay')return repayLoan(state,playerId,amount);
+  if(action==='mark-bad')return updateBadLoans(state,playerId,amount);
+  if(action==='recover-bad')return updateBadLoans(state,playerId,-amount);
+  throw Error('不支援的經營操作。');
+}
+
+// Reuse the rules on a copy: a cancelled preview must never mutate the live game.
+export function previewManagement(state,playerId,action,amount){
+  if(!Number.isInteger(amount)||amount<=0)throw Error('請輸入大於零的整數。');
+  const player=state.players.find(p=>p.id===playerId);
+  if(!player)throw Error('找不到玩家。');
+  const next=JSON.parse(JSON.stringify(state));
+  const summary=s=>({...companyPosition(s,player.roleId),headcount:s.companies[player.roleId].headcount,profit:financials(s,player.roleId).profit,loanInterest:financials(s,player.roleId).loanInterest,badLoans:s.bank.nonperformingLoans});
+  const before=summary(state);
+  applyManagement(next,playerId,action,amount);
+  return {before,after:summary(next)};
+}
+
 function marketShock(state,round){
   const sum=state.activeEvents.filter(a=>a.scope==='global').reduce((total,a)=>{
     const e=eventById(a.eventId),age=round-a.startedRound;

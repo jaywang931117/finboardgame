@@ -1,7 +1,7 @@
 import {ROLES,METRICS,METRIC_LABELS,GLOBAL_EVENTS,PERSONAL_EVENTS,SECTOR_EVENTS,ALL_EVENTS,EVENT_CATEGORIES,FED_RULES,BOARD} from './data.js';
 import {createGame,rollDice,drawEvent,movementPath,endTurn,adjustStaff,issueLoan,repayLoan,updateBadLoans,financials,companyPosition,effectBreakdown,eventRemaining,makeSnapshot,getEconomicSnapshot,getFedRuleEvaluations,getFedDecision,exportGame,importGame} from './engine.js';
 import {syncInfo,isNewerGame} from './sync.js';
-import {playerStandings} from './engine.js';
+import {playerStandings,previewManagement,applyManagement} from './engine.js';
 
 const $=s=>document.querySelector(s),h=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=n=>Math.round(n).toLocaleString('zh-TW'),decimal=(n,d=1)=>n===null||n===undefined?'—（資料不足）':Number(n).toFixed(d),signed=n=>`${n>=0?'+':'−'}${money(Math.abs(n))}`;
@@ -105,7 +105,7 @@ async function withGameLock(work){
 }
 async function run(fn){
   if(animation)return;
-  try{await withGameLock(()=>{if(!ensureFresh())return;fn();save();render()})}
+  try{await withGameLock(()=>{if(!ensureFresh())return;if(fn()===false)return;save();render()})}
   catch(e){notify(e.message||'操作失敗')}
 }
 
@@ -423,7 +423,25 @@ $('#game').addEventListener('click',e=>{
   if(action==='end-turn'){run(()=>{const result=endTurn(state);if(result){snapshotSelection='latest';rememberView();notify(result.finished?'對局結束，請查看勝負結果。':`第 ${result.snapshot.round} 季已結算。`)}});return}
   const numberId=['hire','layoff'].includes(action)?'#staff-count':['loan','repay'].includes(action)?'#loan-amount':'#bad-amount';
   const n=Number($(numberId)?.value);
-  run(()=>{if(action==='hire')adjustStaff(state,p.id,n);else if(action==='layoff')adjustStaff(state,p.id,-n);else if(action==='loan')issueLoan(state,p.id,n);else if(action==='repay')repayLoan(state,p.id,n);else if(action==='mark-bad')updateBadLoans(state,p.id,n);else if(action==='recover-bad')updateBadLoans(state,p.id,-n)});
+  run(()=>{
+    const {before,after}=previewManagement(state,p.id,action,n);
+    const label={hire:'聘僱',layoff:'裁員',loan:'借款',repay:'還款','mark-bad':'認列壞帳','recover-bad':'收回壞帳'}[action];
+    const lines=[`${p.name}：確認${label} ${money(n)} ${['hire','layoff'].includes(action)?'人':'幣'}？`,
+      `現金：${money(before.cash)} → ${money(after.cash)}`,
+      `借款：${money(before.debt)} → ${money(after.debt)}`,
+      `員工：${before.headcount} → ${after.headcount}`,
+      `淨資產：${money(before.netWorth)} → ${money(after.netWorth)}`,
+      `本季借款利息：${decimal(before.loanInterest,2)} → ${decimal(after.loanInterest,2)}`,
+      `本季預估淨利：${decimal(before.profit,2)} → ${decimal(after.profit,2)}`];
+    if(action==='layoff')lines.push(`立即支付資遣費：${decimal(before.cash-after.cash,2)} 幣`);
+    if(action==='loan')lines.push('借款同時增加現金與負債，不會直接提高淨資產。');
+    if(['mark-bad','recover-bad'].includes(action))lines.push(`不良放款：${money(before.badLoans)} → ${money(after.badLoans)}`);
+    lines.push('以上為目前事件與政策下的預估；按取消不會變更對局。');
+    if(!confirm(lines.join('\n')))return false;
+    // Another tab may write while the native confirmation is open on browsers without Web Locks.
+    if(!ensureFresh())return false;
+    applyManagement(state,p.id,action,n);
+  });
 });
 document.querySelectorAll('[data-close-modal]').forEach(x=>x.addEventListener('click',closeCard));
 twoColumnPlayerCards.addEventListener('change',()=>{if(state&&page==='game'&&tab==='business')renderPlayers()});

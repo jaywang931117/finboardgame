@@ -268,6 +268,28 @@ function updateBadLoans(state,playerId,amount){
   state.bank.nonperformingLoans+=amount;state.log.unshift(`銀行${amount>0?'認列':'收回'} ${Math.abs(amount)} 壞帳。`);
 }
 
+function applyManagement(state,playerId,action,amount){
+  if(action==='hire')return adjustStaff(state,playerId,amount);
+  if(action==='layoff')return adjustStaff(state,playerId,-amount);
+  if(action==='loan')return issueLoan(state,playerId,amount);
+  if(action==='repay')return repayLoan(state,playerId,amount);
+  if(action==='mark-bad')return updateBadLoans(state,playerId,amount);
+  if(action==='recover-bad')return updateBadLoans(state,playerId,-amount);
+  throw Error('不支援的經營操作。');
+}
+
+// Reuse the rules on a copy: a cancelled preview must never mutate the live game.
+function previewManagement(state,playerId,action,amount){
+  if(!Number.isInteger(amount)||amount<=0)throw Error('請輸入大於零的整數。');
+  const player=state.players.find(p=>p.id===playerId);
+  if(!player)throw Error('找不到玩家。');
+  const next=JSON.parse(JSON.stringify(state));
+  const summary=s=>({...companyPosition(s,player.roleId),headcount:s.companies[player.roleId].headcount,profit:financials(s,player.roleId).profit,loanInterest:financials(s,player.roleId).loanInterest,badLoans:s.bank.nonperformingLoans});
+  const before=summary(state);
+  applyManagement(next,playerId,action,amount);
+  return {before,after:summary(next)};
+}
+
 function marketShock(state,round){
   const sum=state.activeEvents.filter(a=>a.scope==='global').reduce((total,a)=>{
     const e=eventById(a.eventId),age=round-a.startedRound;
@@ -569,7 +591,7 @@ async function withGameLock(work){
 }
 async function run(fn){
   if(animation)return;
-  try{await withGameLock(()=>{if(!ensureFresh())return;fn();save();render()})}
+  try{await withGameLock(()=>{if(!ensureFresh())return;if(fn()===false)return;save();render()})}
   catch(e){notify(e.message||'操作失敗')}
 }
 
@@ -887,7 +909,25 @@ $('#game').addEventListener('click',e=>{
   if(action==='end-turn'){run(()=>{const result=endTurn(state);if(result){snapshotSelection='latest';rememberView();notify(result.finished?'對局結束，請查看勝負結果。':`第 ${result.snapshot.round} 季已結算。`)}});return}
   const numberId=['hire','layoff'].includes(action)?'#staff-count':['loan','repay'].includes(action)?'#loan-amount':'#bad-amount';
   const n=Number($(numberId)?.value);
-  run(()=>{if(action==='hire')adjustStaff(state,p.id,n);else if(action==='layoff')adjustStaff(state,p.id,-n);else if(action==='loan')issueLoan(state,p.id,n);else if(action==='repay')repayLoan(state,p.id,n);else if(action==='mark-bad')updateBadLoans(state,p.id,n);else if(action==='recover-bad')updateBadLoans(state,p.id,-n)});
+  run(()=>{
+    const {before,after}=previewManagement(state,p.id,action,n);
+    const label={hire:'聘僱',layoff:'裁員',loan:'借款',repay:'還款','mark-bad':'認列壞帳','recover-bad':'收回壞帳'}[action];
+    const lines=[`${p.name}：確認${label} ${money(n)} ${['hire','layoff'].includes(action)?'人':'幣'}？`,
+      `現金：${money(before.cash)} → ${money(after.cash)}`,
+      `借款：${money(before.debt)} → ${money(after.debt)}`,
+      `員工：${before.headcount} → ${after.headcount}`,
+      `淨資產：${money(before.netWorth)} → ${money(after.netWorth)}`,
+      `本季借款利息：${decimal(before.loanInterest,2)} → ${decimal(after.loanInterest,2)}`,
+      `本季預估淨利：${decimal(before.profit,2)} → ${decimal(after.profit,2)}`];
+    if(action==='layoff')lines.push(`立即支付資遣費：${decimal(before.cash-after.cash,2)} 幣`);
+    if(action==='loan')lines.push('借款同時增加現金與負債，不會直接提高淨資產。');
+    if(['mark-bad','recover-bad'].includes(action))lines.push(`不良放款：${money(before.badLoans)} → ${money(after.badLoans)}`);
+    lines.push('以上為目前事件與政策下的預估；按取消不會變更對局。');
+    if(!confirm(lines.join('\n')))return false;
+    // Another tab may write while the native confirmation is open on browsers without Web Locks.
+    if(!ensureFresh())return false;
+    applyManagement(state,p.id,action,n);
+  });
 });
 document.querySelectorAll('[data-close-modal]').forEach(x=>x.addEventListener('click',closeCard));
 twoColumnPlayerCards.addEventListener('change',()=>{if(state&&page==='game'&&tab==='business')renderPlayers()});
