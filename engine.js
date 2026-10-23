@@ -59,6 +59,17 @@ export function financials(state,roleId,round=state.round){
 }
 export function companyPosition(state,roleId){const c=state.companies[roleId];return {cash:c.cash,assetValue:assetValue(state,roleId),debt:c.debt,netWorth:c.cash+assetValue(state,roleId)-c.debt}}
 
+// Current wealth ranking is informational; the existing victory rules still decide winners.
+export function playerStandings(state){
+  const entries=state.players.map(player=>({player,...companyPosition(state,player.roleId)}))
+    .sort((a,b)=>b.netWorth-a.netWorth);
+  let rank=0;
+  return entries.map((entry,index)=>{
+    if(index===0||entry.netWorth!==entries[index-1].netWorth)rank=index+1;
+    return {...entry,rank,remaining:Math.max(0,state.targetWealth-entry.netWorth),progress:clamp(entry.netWorth/state.targetWealth*100,0,100)};
+  });
+}
+
 export function createGame({players,seed=Date.now(),targetWealth=5500,maxRounds=12}){
   if(!Array.isArray(players)||players.length<2||players.length>8)throw Error('請選擇 2 至 8 位玩家。');
   if(new Set(players.map(p=>p.roleId)).size!==players.length||players.some(p=>!roleById(p.roleId)))throw Error('每位玩家需要不同的企業角色。');

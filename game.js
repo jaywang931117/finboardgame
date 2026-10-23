@@ -169,6 +169,17 @@ function financials(state,roleId,round=state.round){
 }
 function companyPosition(state,roleId){const c=state.companies[roleId];return {cash:c.cash,assetValue:assetValue(state,roleId),debt:c.debt,netWorth:c.cash+assetValue(state,roleId)-c.debt}}
 
+// Current wealth ranking is informational; the existing victory rules still decide winners.
+function playerStandings(state){
+  const entries=state.players.map(player=>({player,...companyPosition(state,player.roleId)}))
+    .sort((a,b)=>b.netWorth-a.netWorth);
+  let rank=0;
+  return entries.map((entry,index)=>{
+    if(index===0||entry.netWorth!==entries[index-1].netWorth)rank=index+1;
+    return {...entry,rank,remaining:Math.max(0,state.targetWealth-entry.netWorth),progress:clamp(entry.netWorth/state.targetWealth*100,0,100)};
+  });
+}
+
 function createGame({players,seed=Date.now(),targetWealth=5500,maxRounds=12}){
   if(!Array.isArray(players)||players.length<2||players.length>8)throw Error('請選擇 2 至 8 位玩家。');
   if(new Set(players.map(p=>p.roleId)).size!==players.length||players.some(p=>!roleById(p.roleId)))throw Error('每位玩家需要不同的企業角色。');
@@ -713,6 +724,7 @@ function renderMini(){const s=makeSnapshot(state);const fields=[['預估通膨',
 function renderGoals(){
   $('#goal-copy').textContent=`淨資產達 ${money(state.targetWealth)}、任一玩家破產，或第 ${state.maxRounds} 季結束。`;
   $('#goal-progress').innerHTML=state.players.map(p=>{const wealth=companyPosition(state,p.roleId).netWorth;return `<div class="goal-person"><span>${h(p.name)}</span><span>${money(wealth)} / ${money(state.targetWealth)}</span></div><div class="goal-track"><i style="width:${Math.max(0,Math.min(100,wealth/state.targetWealth*100))}%"></i></div>`}).join('');
+  $('#wealth-ranking').innerHTML=playerStandings(state).map(entry=>`<li class="ranking-row ${entry.player.id===currentPlayer().id&&state.status==='playing'?'ranking-current':''}"><span class="ranking-number">${entry.rank}</span><div class="ranking-detail"><div class="ranking-title"><strong>${h(entry.player.name)}</strong><span>${money(entry.netWorth)} 幣</span></div><p>${h(role(entry.player.roleId).name)} · ${entry.remaining>0?`距目標差 ${money(entry.remaining)} 幣`:'已達資產目標'}</p><progress max="100" value="${entry.progress}" aria-label="${h(entry.player.name)}的資產目標進度"></progress></div></li>`).join('');
 }
 let eventTheme='all';
 $('#event-category-filter').innerHTML='<option value="all">全部主題</option>'+EVENT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');

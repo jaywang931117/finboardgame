@@ -1,6 +1,7 @@
 import {ROLES,METRICS,METRIC_LABELS,GLOBAL_EVENTS,PERSONAL_EVENTS,SECTOR_EVENTS,ALL_EVENTS,EVENT_CATEGORIES,FED_RULES,BOARD} from './data.js';
 import {createGame,rollDice,drawEvent,movementPath,endTurn,adjustStaff,issueLoan,repayLoan,updateBadLoans,financials,companyPosition,effectBreakdown,eventRemaining,makeSnapshot,getEconomicSnapshot,getFedRuleEvaluations,getFedDecision,exportGame,importGame} from './engine.js';
 import {syncInfo,isNewerGame} from './sync.js';
+import {playerStandings} from './engine.js';
 
 const $=s=>document.querySelector(s),h=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=n=>Math.round(n).toLocaleString('zh-TW'),decimal=(n,d=1)=>n===null||n===undefined?'—（資料不足）':Number(n).toFixed(d),signed=n=>`${n>=0?'+':'−'}${money(Math.abs(n))}`;
@@ -259,6 +260,7 @@ function renderMini(){const s=makeSnapshot(state);const fields=[['預估通膨',
 function renderGoals(){
   $('#goal-copy').textContent=`淨資產達 ${money(state.targetWealth)}、任一玩家破產，或第 ${state.maxRounds} 季結束。`;
   $('#goal-progress').innerHTML=state.players.map(p=>{const wealth=companyPosition(state,p.roleId).netWorth;return `<div class="goal-person"><span>${h(p.name)}</span><span>${money(wealth)} / ${money(state.targetWealth)}</span></div><div class="goal-track"><i style="width:${Math.max(0,Math.min(100,wealth/state.targetWealth*100))}%"></i></div>`}).join('');
+  $('#wealth-ranking').innerHTML=playerStandings(state).map(entry=>`<li class="ranking-row ${entry.player.id===currentPlayer().id&&state.status==='playing'?'ranking-current':''}"><span class="ranking-number">${entry.rank}</span><div class="ranking-detail"><div class="ranking-title"><strong>${h(entry.player.name)}</strong><span>${money(entry.netWorth)} 幣</span></div><p>${h(role(entry.player.roleId).name)} · ${entry.remaining>0?`距目標差 ${money(entry.remaining)} 幣`:'已達資產目標'}</p><progress max="100" value="${entry.progress}" aria-label="${h(entry.player.name)}的資產目標進度"></progress></div></li>`).join('');
 }
 let eventTheme='all';
 $('#event-category-filter').innerHTML='<option value="all">全部主題</option>'+EVENT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
